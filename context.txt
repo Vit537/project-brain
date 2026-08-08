@@ -1,0 +1,2703 @@
+# JARVIS AI Assistant - Complete Technical Specification Document
+
+## Project Overview
+
+**Project Name:** JARVIS - Personal AI Assistant  
+**Objective:** Create an advanced, always-running AI assistant similar to Marvel's JARVIS/FRIDAY that can:
+- Control the computer through voice commands
+- Learn and remember user preferences over time
+- Access and manage data from multiple sources (phone, calendar, email, etc.)
+- Wake up on voice command ("Jarvis") without manual script execution
+- Provide intelligent, context-aware responses using RAG (Retrieval-Augmented Generation)
+
+---
+
+## 1. System Architecture
+
+### 1.1 High-Level Architecture
+
+```
+┌──────────────────────────────────────────────────────────┐
+│              JARVIS System Components                     │
+├──────────────────────────────────────────────────────────┤
+│                                                           │
+│  ┌─────────────────────────────────────────────┐        │
+│  │   Layer 1: Wake Word Detection Service      │        │
+│  │   - Always running in background             │        │
+│  │   - Low CPU/memory usage                     │        │
+│  │   - Listens for "Jarvis" trigger             │        │
+│  └──────────────┬───────────────────────────────┘        │
+│                 │ (Activates on wake word)                │
+│                 ↓                                         │
+│  ┌─────────────────────────────────────────────┐        │
+│  │   Layer 2: Core AI Processing Engine        │        │
+│  │   - Speech Recognition (Speech-to-Text)      │        │
+│  │   - Intent Classification                     │        │
+│  │   - RAG System (Context Retrieval)           │        │
+│  │   - Groq LLM Integration                     │        │
+│  │   - Action Execution                          │        │
+│  │   - Text-to-Speech Response                  │        │
+│  └──────────────┬───────────────────────────────┘        │
+│                 │                                         │
+│                 ↓                                         │
+│  ┌─────────────────────────────────────────────┐        │
+│  │   Layer 3: Data Storage & Memory            │        │
+│  │   - PostgreSQL + pgvector                    │        │
+│  │   - Conversation History                      │        │
+│  │   - User Preferences & Patterns              │        │
+│  │   - External Data Cache                       │        │
+│  └──────────────┬───────────────────────────────┘        │
+│                 │                                         │
+│                 ↓                                         │
+│  ┌─────────────────────────────────────────────┐        │
+│  │   Layer 4: Integration/Plugin System         │        │
+│  │   - Phone Bridge API                          │        │
+│  │   - Google Calendar/Contacts                 │        │
+│  │   - Email Services                            │        │
+│  │   - Computer Control                          │        │
+│  │   - Custom Automations                        │        │
+│  └─────────────────────────────────────────────┘        │
+│                                                           │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 1.2 Technology Stack
+
+**Core Programming:**
+- Python 3.10+ (main language)
+- Asyncio for concurrent operations
+
+**AI/ML Components:**
+- Groq API (LLM for natural language understanding)
+- OpenAI/Groq Embeddings (for vector similarity)
+- Speech Recognition library
+- pyttsx3 or gTTS (Text-to-Speech)
+
+**Database:**
+- PostgreSQL 14+ with pgvector extension
+- Connection: psycopg2 or asyncpg
+
+**Wake Word Detection:**
+- Picovoice Porcupine (recommended - custom wake words)
+- Alternative: Snowboy or Mycroft Precise
+
+**System Integration:**
+- pyautogui (computer control)
+- subprocess (execute system commands)
+- requests/aiohttp (API calls)
+
+**Service Management:**
+- Windows: NSSM or Task Scheduler
+- Linux: systemd
+- macOS: launchd
+
+---
+
+## 2. Core Components - Detailed Specifications
+
+### 2.1 Wake Word Detection Service
+
+**Purpose:** Always-running background service that listens for "Jarvis" wake word
+
+**Requirements:**
+- Must consume minimal resources (< 50MB RAM, < 5% CPU)
+- Should start automatically on system boot
+- Should restart automatically if crashed
+- Must work even when other applications are in focus
+
+**Implementation Options:**
+
+**Option A: Picovoice Porcupine (Recommended)**
+```python
+import pvporcupine
+import pyaudio
+import struct
+
+class WakeWordDetector:
+    def __init__(self):
+        self.porcupine = pvporcupine.create(
+            access_key='YOUR_PICOVOICE_KEY',
+            keywords=['jarvis']  # or use custom .ppn file
+        )
+        self.audio_stream = None
+        
+    def start_listening(self):
+        """Continuously listen for wake word"""
+        pa = pyaudio.PyAudio()
+        self.audio_stream = pa.open(
+            rate=self.porcupine.sample_rate,
+            channels=1,
+            format=pyaudio.paInt16,
+            input=True,
+            frames_per_buffer=self.porcupine.frame_length
+        )
+        
+        while True:
+            pcm = self.audio_stream.read(self.porcupine.frame_length)
+            pcm = struct.unpack_from("h" * self.porcupine.frame_length, pcm)
+            
+            keyword_index = self.porcupine.process(pcm)
+            
+            if keyword_index >= 0:
+                self.on_wake_word_detected()
+    
+    def on_wake_word_detected(self):
+        """Trigger main Jarvis system"""
+        print("Wake word detected! Activating Jarvis...")
+        # Activate main system here
+        activate_jarvis_core()
+```
+
+**Service Configuration:**
+
+**Windows Service (using NSSM):**
+```batch
+nssm install JarvisWakeWord "C:\Python310\python.exe" "C:\path\to\wake_word_service.py"
+nssm set JarvisWakeWord AppDirectory "C:\path\to\project"
+nssm set JarvisWakeWord Start SERVICE_AUTO_START
+nssm start JarvisWakeWord
+```
+
+**Linux systemd Service:**
+```ini
+[Unit]
+Description=Jarvis Wake Word Detection Service
+After=network.target
+
+[Service]
+Type=simple
+User=your_username
+WorkingDirectory=/home/user/jarvis
+ExecStart=/usr/bin/python3 /home/user/jarvis/wake_word_service.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+---
+
+### 2.2 Speech Recognition & Processing
+
+**Speech-to-Text:**
+```python
+import speech_recognition as sr
+
+class SpeechRecognizer:
+    def __init__(self):
+        self.recognizer = sr.Recognizer()
+        self.microphone = sr.Microphone()
+        
+    def listen_for_command(self, timeout=5):
+        """Listen and convert speech to text"""
+        with self.microphone as source:
+            # Adjust for ambient noise
+            self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+            
+            print("Listening for command...")
+            audio = self.recognizer.listen(source, timeout=timeout)
+            
+        try:
+            # Use Google Speech Recognition (free)
+            text = self.recognizer.recognize_google(audio)
+            return text
+        except sr.UnknownValueError:
+            return None
+        except sr.RequestError as e:
+            print(f"Error: {e}")
+            return None
+```
+
+**Text-to-Speech:**
+```python
+import pyttsx3
+
+class TextToSpeech:
+    def __init__(self):
+        self.engine = pyttsx3.init()
+        self.engine.setProperty('rate', 175)  # Speed
+        self.engine.setProperty('volume', 0.9)
+        
+        # Set voice (optional - choose male/female)
+        voices = self.engine.getProperty('voices')
+        self.engine.setProperty('voice', voices[0].id)
+    
+    def speak(self, text):
+        """Convert text to speech"""
+        self.engine.say(text)
+        self.engine.runAndWait()
+```
+
+---
+
+### 2.3 Database Schema (PostgreSQL + pgvector)
+
+**Installation:**
+```sql
+-- Install pgvector extension
+CREATE EXTENSION vector;
+```
+
+**Complete Schema:**
+
+```sql
+-- ============================================
+-- TABLE 1: Conversation Memory with Embeddings
+-- ============================================
+CREATE TABLE conversations (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP DEFAULT NOW(),
+    user_input TEXT NOT NULL,
+    ai_response TEXT NOT NULL,
+    embedding vector(1536),  -- Embedding dimension
+    intent VARCHAR(100),      -- Classified intent
+    context_used JSONB,       -- What context was retrieved
+    action_taken TEXT,        -- What action was executed
+    success BOOLEAN,          -- Whether action succeeded
+    execution_time_ms INTEGER -- Response time
+);
+
+-- Index for vector similarity search
+CREATE INDEX ON conversations USING ivfflat (embedding vector_cosine_ops);
+
+-- Index for time-based queries
+CREATE INDEX idx_conversations_timestamp ON conversations(timestamp DESC);
+
+
+-- ============================================
+-- TABLE 2: User Profile & Learned Patterns
+-- ============================================
+CREATE TABLE user_profile (
+    id SERIAL PRIMARY KEY,
+    category VARCHAR(100) NOT NULL,  -- 'preference', 'habit', 'routine'
+    key VARCHAR(255) NOT NULL,
+    value JSONB NOT NULL,
+    confidence_score FLOAT DEFAULT 0.5,  -- How sure we are (0-1)
+    frequency INTEGER DEFAULT 1,         -- How often observed
+    last_updated TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(category, key)
+);
+
+-- Example data:
+-- category: 'morning_routine'
+-- key: 'opens_email'
+-- value: {"time": "09:00", "app": "gmail", "days": ["Mon", "Tue", "Wed", "Thu", "Fri"]}
+-- confidence_score: 0.95
+
+
+-- ============================================
+-- TABLE 3: External Data Cache
+-- ============================================
+CREATE TABLE external_data (
+    id SERIAL PRIMARY KEY,
+    source VARCHAR(100) NOT NULL,     -- 'phone', 'calendar', 'email', 'contacts'
+    data_type VARCHAR(100) NOT NULL,  -- 'contact', 'event', 'notification', 'sms'
+    content JSONB NOT NULL,
+    embedding vector(1536),           -- For semantic search
+    synced_at TIMESTAMP DEFAULT NOW(),
+    expires_at TIMESTAMP,             -- Optional TTL
+    metadata JSONB                    -- Additional info
+);
+
+CREATE INDEX idx_external_data_source ON external_data(source, data_type);
+CREATE INDEX ON external_data USING ivfflat (embedding vector_cosine_ops);
+
+-- Example data:
+-- source: 'phone'
+-- data_type: 'contact'
+-- content: {"name": "John Doe", "phone": "+1234567890", "email": "john@example.com"}
+
+
+-- ============================================
+-- TABLE 4: Skills & Custom Commands
+-- ============================================
+CREATE TABLE skills (
+    id SERIAL PRIMARY KEY,
+    skill_name VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT,
+    trigger_phrases TEXT[] NOT NULL,  -- Array of phrases that activate this skill
+    python_function TEXT NOT NULL,    -- Function name to call
+    required_params JSONB,            -- What parameters are needed
+    example_usage TEXT,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Example data:
+-- skill_name: 'open_application'
+-- trigger_phrases: ['open {app}', 'launch {app}', 'start {app}']
+-- python_function: 'open_app'
+-- required_params: {"app": "string"}
+
+
+-- ============================================
+-- TABLE 5: Action Execution Log
+-- ============================================
+CREATE TABLE action_log (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP DEFAULT NOW(),
+    action_type VARCHAR(100) NOT NULL,  -- 'open_app', 'send_email', 'search_web'
+    parameters JSONB,
+    result TEXT,
+    success BOOLEAN,
+    error_message TEXT,
+    user_feedback VARCHAR(50)  -- 'positive', 'negative', 'neutral'
+);
+
+
+-- ============================================
+-- TABLE 6: System Events & Notifications
+-- ============================================
+CREATE TABLE system_events (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP DEFAULT NOW(),
+    event_type VARCHAR(100) NOT NULL,  -- 'reminder', 'notification', 'alert'
+    title VARCHAR(255),
+    message TEXT,
+    priority VARCHAR(20),  -- 'low', 'medium', 'high', 'urgent'
+    status VARCHAR(50) DEFAULT 'pending',  -- 'pending', 'delivered', 'dismissed'
+    deliver_at TIMESTAMP,
+    delivered_at TIMESTAMP
+);
+```
+
+---
+
+### 2.4 RAG System Implementation
+
+**Purpose:** Retrieve relevant context from past conversations to provide intelligent, context-aware responses
+
+**Core RAG Class:**
+
+```python
+from groq import Groq
+import psycopg2
+from pgvector.psycopg2 import register_vector
+import numpy as np
+from typing import List, Dict
+import json
+
+class JarvisRAG:
+    def __init__(self, groq_api_key: str, db_config: Dict):
+        """
+        Initialize RAG system
+        
+        Args:
+            groq_api_key: Your Groq API key
+            db_config: PostgreSQL connection config
+        """
+        self.groq_client = Groq(api_key=groq_api_key)
+        self.db = psycopg2.connect(**db_config)
+        register_vector(self.db)
+        
+        # Models
+        self.chat_model = "mixtral-8x7b-32768"  # or "llama-3.1-70b-versatile"
+        self.embedding_model = "text-embedding-ada-002"  # Configure based on availability
+    
+    def get_embedding(self, text: str) -> List[float]:
+        """
+        Generate embedding vector for text
+        
+        Args:
+            text: Input text to embed
+            
+        Returns:
+            List of floats representing the embedding
+        """
+        # Note: Groq may not have embeddings API
+        # Use OpenAI or another service for embeddings
+        from openai import OpenAI
+        client = OpenAI(api_key="your_openai_key")
+        
+        response = client.embeddings.create(
+            model=self.embedding_model,
+            input=text
+        )
+        return response.data[0].embedding
+    
+    def retrieve_relevant_context(self, query: str, limit: int = 5) -> List[Dict]:
+        """
+        Retrieve most relevant past conversations
+        
+        Args:
+            query: User's current query
+            limit: Number of results to return
+            
+        Returns:
+            List of relevant conversation snippets
+        """
+        query_embedding = self.get_embedding(query)
+        
+        cursor = self.db.cursor()
+        cursor.execute("""
+            SELECT 
+                user_input,
+                ai_response,
+                timestamp,
+                intent,
+                action_taken,
+                1 - (embedding <=> %s::vector) as similarity
+            FROM conversations
+            WHERE embedding IS NOT NULL
+            ORDER BY embedding <=> %s::vector
+            LIMIT %s
+        """, (query_embedding, query_embedding, limit))
+        
+        results = cursor.fetchall()
+        cursor.close()
+        
+        context = []
+        for row in results:
+            context.append({
+                'user_input': row[0],
+                'ai_response': row[1],
+                'timestamp': row[2].isoformat(),
+                'intent': row[3],
+                'action_taken': row[4],
+                'similarity': row[5]
+            })
+        
+        return context
+    
+    def get_user_preferences(self, category: str = None) -> Dict:
+        """
+        Retrieve user preferences from database
+        
+        Args:
+            category: Optional category filter
+            
+        Returns:
+            Dictionary of user preferences
+        """
+        cursor = self.db.cursor()
+        
+        if category:
+            cursor.execute("""
+                SELECT key, value, confidence_score
+                FROM user_profile
+                WHERE category = %s AND confidence_score > 0.7
+                ORDER BY confidence_score DESC
+            """, (category,))
+        else:
+            cursor.execute("""
+                SELECT category, key, value, confidence_score
+                FROM user_profile
+                WHERE confidence_score > 0.7
+                ORDER BY confidence_score DESC
+                LIMIT 20
+            """)
+        
+        results = cursor.fetchall()
+        cursor.close()
+        
+        preferences = {}
+        for row in results:
+            if category:
+                preferences[row[0]] = {
+                    'value': row[1],
+                    'confidence': row[2]
+                }
+            else:
+                if row[0] not in preferences:
+                    preferences[row[0]] = {}
+                preferences[row[0]][row[1]] = {
+                    'value': row[2],
+                    'confidence': row[3]
+                }
+        
+        return preferences
+    
+    def build_system_prompt(self, user_preferences: Dict) -> str:
+        """
+        Build system prompt with user context
+        
+        Args:
+            user_preferences: User's learned preferences
+            
+        Returns:
+            System prompt string
+        """
+        prefs_str = json.dumps(user_preferences, indent=2)
+        
+        return f"""You are Jarvis, an advanced personal AI assistant similar to the AI from Iron Man.
+
+Your capabilities:
+- Control the computer (open applications, execute commands)
+- Access calendar, contacts, and emails
+- Remember past conversations and learn user preferences
+- Provide proactive suggestions based on patterns
+- Respond with intelligence, wit, and efficiency
+
+User Profile & Preferences:
+{prefs_str}
+
+Guidelines:
+- Be concise but helpful
+- Use the user's name when you know it
+- Reference past conversations when relevant
+- Anticipate needs based on patterns
+- Confirm before executing destructive actions
+- Maintain a professional but friendly tone"""
+    
+    def process_command(self, user_input: str) -> Dict:
+        """
+        Main processing function - handles user command with RAG
+        
+        Args:
+            user_input: User's voice/text input
+            
+        Returns:
+            Dictionary with response and metadata
+        """
+        # 1. Retrieve relevant past context
+        relevant_context = self.retrieve_relevant_context(user_input, limit=5)
+        
+        # 2. Get user preferences
+        user_prefs = self.get_user_preferences()
+        
+        # 3. Build context string
+        context_str = ""
+        if relevant_context:
+            context_str = "Relevant past interactions:\n"
+            for i, ctx in enumerate(relevant_context, 1):
+                context_str += f"{i}. [{ctx['timestamp']}] User: {ctx['user_input']}\n"
+                context_str += f"   Jarvis: {ctx['ai_response']}\n"
+                if ctx['action_taken']:
+                    context_str += f"   Action: {ctx['action_taken']}\n"
+                context_str += "\n"
+        
+        # 4. Build system prompt
+        system_prompt = self.build_system_prompt(user_prefs)
+        
+        # 5. Create messages for Groq
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"{context_str}\n\nCurrent request: {user_input}"}
+        ]
+        
+        # 6. Get response from Groq
+        try:
+            response = self.groq_client.chat.completions.create(
+                model=self.chat_model,
+                messages=messages,
+                temperature=0.7,
+                max_tokens=500
+            )
+            
+            ai_response = response.choices[0].message.content
+            
+            # 7. Classify intent (you can use another Groq call or rule-based)
+            intent = self.classify_intent(user_input, ai_response)
+            
+            # 8. Execute action if needed
+            action_result = self.execute_action(intent, user_input, ai_response)
+            
+            # 9. Store interaction in database
+            self.store_interaction(
+                user_input=user_input,
+                ai_response=ai_response,
+                intent=intent,
+                action_taken=action_result.get('action'),
+                success=action_result.get('success')
+            )
+            
+            return {
+                'response': ai_response,
+                'intent': intent,
+                'action_result': action_result,
+                'context_used': len(relevant_context)
+            }
+            
+        except Exception as e:
+            return {
+                'response': f"I encountered an error: {str(e)}",
+                'intent': 'error',
+                'action_result': {'success': False, 'error': str(e)},
+                'context_used': 0
+            }
+    
+    def classify_intent(self, user_input: str, ai_response: str) -> str:
+        """
+        Classify the intent of user's command
+        
+        Args:
+            user_input: User's input
+            ai_response: AI's response
+            
+        Returns:
+            Intent classification string
+        """
+        # Simple rule-based classification
+        # You can make this more sophisticated with ML
+        
+        user_lower = user_input.lower()
+        
+        intents = {
+            'open_app': ['open', 'launch', 'start', 'run'],
+            'close_app': ['close', 'quit', 'exit', 'kill'],
+            'search_web': ['search', 'google', 'look up', 'find'],
+            'send_email': ['send email', 'email', 'compose'],
+            'calendar': ['calendar', 'schedule', 'meeting', 'appointment'],
+            'reminder': ['remind', 'reminder', 'remember'],
+            'weather': ['weather', 'temperature', 'forecast'],
+            'time': ['time', 'what time', 'clock'],
+            'general_query': []  # Default
+        }
+        
+        for intent, keywords in intents.items():
+            if any(keyword in user_lower for keyword in keywords):
+                return intent
+        
+        return 'general_query'
+    
+    def execute_action(self, intent: str, user_input: str, ai_response: str) -> Dict:
+        """
+        Execute system actions based on intent
+        
+        Args:
+            intent: Classified intent
+            user_input: Original user input
+            ai_response: AI's response
+            
+        Returns:
+            Dictionary with action result
+        """
+        try:
+            if intent == 'open_app':
+                # Extract app name (simple extraction)
+                import re
+                match = re.search(r'open\s+(\w+)', user_input.lower())
+                if match:
+                    app_name = match.group(1)
+                    return self.open_application(app_name)
+            
+            elif intent == 'search_web':
+                # Extract search query
+                import re
+                match = re.search(r'search\s+(?:for\s+)?(.+)', user_input.lower())
+                if match:
+                    query = match.group(1)
+                    return self.search_web(query)
+            
+            # Add more intent handlers here
+            
+            return {'action': None, 'success': True}
+            
+        except Exception as e:
+            return {'action': intent, 'success': False, 'error': str(e)}
+    
+    def open_application(self, app_name: str) -> Dict:
+        """
+        Open an application
+        
+        Args:
+            app_name: Name of application
+            
+        Returns:
+            Result dictionary
+        """
+        import subprocess
+        import platform
+        
+        # Map common names to actual executables
+        app_map = {
+            'chrome': 'chrome' if platform.system() != 'Windows' else 'chrome.exe',
+            'firefox': 'firefox',
+            'notepad': 'notepad.exe',
+            'calculator': 'calc.exe',
+            'spotify': 'spotify',
+            # Add more applications
+        }
+        
+        executable = app_map.get(app_name.lower(), app_name)
+        
+        try:
+            subprocess.Popen([executable])
+            return {
+                'action': f'open_app:{app_name}',
+                'success': True,
+                'message': f'Opened {app_name}'
+            }
+        except Exception as e:
+            return {
+                'action': f'open_app:{app_name}',
+                'success': False,
+                'error': str(e)
+            }
+    
+    def search_web(self, query: str) -> Dict:
+        """
+        Perform web search
+        
+        Args:
+            query: Search query
+            
+        Returns:
+            Result dictionary
+        """
+        import webbrowser
+        
+        try:
+            url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
+            webbrowser.open(url)
+            return {
+                'action': f'search_web:{query}',
+                'success': True,
+                'message': f'Searching for: {query}'
+            }
+        except Exception as e:
+            return {
+                'action': f'search_web:{query}',
+                'success': False,
+                'error': str(e)
+            }
+    
+    def store_interaction(self, user_input: str, ai_response: str, 
+                         intent: str, action_taken: str = None, 
+                         success: bool = True):
+        """
+        Store conversation in database with embedding
+        
+        Args:
+            user_input: User's input
+            ai_response: AI's response
+            intent: Classified intent
+            action_taken: What action was executed
+            success: Whether action succeeded
+        """
+        # Generate embedding
+        embedding = self.get_embedding(user_input)
+        
+        cursor = self.db.cursor()
+        cursor.execute("""
+            INSERT INTO conversations 
+            (user_input, ai_response, embedding, intent, action_taken, success)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (user_input, ai_response, embedding, intent, action_taken, success))
+        
+        self.db.commit()
+        cursor.close()
+    
+    def learn_preference(self, category: str, key: str, value: any, 
+                        increment_frequency: bool = True):
+        """
+        Store or update a learned user preference
+        
+        Args:
+            category: Preference category
+            key: Preference key
+            value: Preference value
+            increment_frequency: Whether to increment frequency counter
+        """
+        cursor = self.db.cursor()
+        
+        # Convert value to JSON if not already
+        if not isinstance(value, str):
+            import json
+            value = json.dumps(value)
+        
+        cursor.execute("""
+            INSERT INTO user_profile (category, key, value, frequency, confidence_score)
+            VALUES (%s, %s, %s, 1, 0.5)
+            ON CONFLICT (category, key) 
+            DO UPDATE SET
+                value = EXCLUDED.value,
+                frequency = user_profile.frequency + CASE WHEN %s THEN 1 ELSE 0 END,
+                confidence_score = LEAST(1.0, user_profile.confidence_score + 0.1),
+                last_updated = NOW()
+        """, (category, key, value, increment_frequency))
+        
+        self.db.commit()
+        cursor.close()
+```
+
+---
+
+### 2.5 Phone Integration System
+
+**Architecture Options:**
+
+**Option 1: Android Companion App (Recommended)**
+
+Create a simple Android app that:
+1. Runs a REST API server on the phone
+2. Exposes endpoints for accessing phone data
+3. Connects to Jarvis over local network or cloud
+
+**Technology:**
+- **Framework:** Flutter (cross-platform) or Kotlin (Android native)
+- **Server:** Ktor (Kotlin) or Flask (via Termux for Python)
+- **Communication:** REST API + WebSocket for real-time
+
+**Endpoints Needed:**
+
+```
+GET  /api/contacts          - List all contacts
+GET  /api/contacts/{id}     - Get specific contact
+GET  /api/calls/recent      - Recent call log
+GET  /api/sms/recent        - Recent SMS messages
+POST /api/sms/send          - Send SMS
+GET  /api/notifications     - Current notifications
+GET  /api/calendar/events   - Calendar events
+POST /api/calendar/add      - Add calendar event
+GET  /api/location          - Current location
+GET  /api/battery           - Battery status
+```
+
+**Security:**
+- Use API key authentication
+- Only allow connections from trusted IP (your computer)
+- Optionally use HTTPS with self-signed cert
+
+**Python Client for Phone API:**
+
+```python
+import requests
+from typing import List, Dict, Optional
+
+class PhoneAPI:
+    def __init__(self, base_url: str, api_key: str):
+        """
+        Initialize phone API client
+        
+        Args:
+            base_url: Phone API URL (e.g., http://192.168.1.100:8080)
+            api_key: Authentication key
+        """
+        self.base_url = base_url.rstrip('/')
+        self.headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json'
+        }
+    
+    def get_contacts(self, query: str = None) -> List[Dict]:
+        """Get all contacts or search by name/number"""
+        params = {'q': query} if query else {}
+        response = requests.get(
+            f'{self.base_url}/api/contacts',
+            headers=self.headers,
+            params=params
+        )
+        return response.json()
+    
+    def get_recent_calls(self, limit: int = 10) -> List[Dict]:
+        """Get recent call log"""
+        response = requests.get(
+            f'{self.base_url}/api/calls/recent',
+            headers=self.headers,
+            params={'limit': limit}
+        )
+        return response.json()
+    
+    def send_sms(self, number: str, message: str) -> Dict:
+        """Send SMS message"""
+        response = requests.post(
+            f'{self.base_url}/api/sms/send',
+            headers=self.headers,
+            json={'number': number, 'message': message}
+        )
+        return response.json()
+    
+    def get_notifications(self) -> List[Dict]:
+        """Get current notifications"""
+        response = requests.get(
+            f'{self.base_url}/api/notifications',
+            headers=self.headers
+        )
+        return response.json()
+    
+    def get_calendar_events(self, days: int = 7) -> List[Dict]:
+        """Get upcoming calendar events"""
+        response = requests.get(
+            f'{self.base_url}/api/calendar/events',
+            headers=self.headers,
+            params={'days': days}
+        )
+        return response.json()
+    
+    def sync_to_database(self, db_connection):
+        """Sync phone data to PostgreSQL"""
+        # Get data from phone
+        contacts = self.get_contacts()
+        recent_calls = self.get_recent_calls()
+        notifications = self.get_notifications()
+        
+        cursor = db_connection.cursor()
+        
+        # Store contacts
+        for contact in contacts:
+            cursor.execute("""
+                INSERT INTO external_data (source, data_type, content)
+                VALUES ('phone', 'contact', %s)
+                ON CONFLICT DO NOTHING
+            """, (json.dumps(contact),))
+        
+        # Store calls
+        for call in recent_calls:
+            cursor.execute("""
+                INSERT INTO external_data (source, data_type, content)
+                VALUES ('phone', 'call', %s)
+            """, (json.dumps(call),))
+        
+        # Store notifications
+        for notification in notifications:
+            cursor.execute("""
+                INSERT INTO external_data (source, data_type, content)
+                VALUES ('phone', 'notification', %s)
+            """, (json.dumps(notification),))
+        
+        db_connection.commit()
+        cursor.close()
+```
+
+**Option 2: Cloud-Based Sync (Google/Microsoft APIs)**
+
+Use existing cloud services that already sync with your phone:
+
+```python
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
+class GoogleIntegration:
+    def __init__(self, credentials_path: str):
+        """Initialize Google API integration"""
+        self.creds = Credentials.from_authorized_user_file(credentials_path)
+    
+    def get_calendar_events(self, days: int = 7):
+        """Get calendar events from Google Calendar"""
+        service = build('calendar', 'v3', credentials=self.creds)
+        
+        from datetime import datetime, timedelta
+        now = datetime.utcnow().isoformat() + 'Z'
+        end = (datetime.utcnow() + timedelta(days=days)).isoformat() + 'Z'
+        
+        events_result = service.events().list(
+            calendarId='primary',
+            timeMin=now,
+            timeMax=end,
+            maxResults=50,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        
+        return events_result.get('items', [])
+    
+    def get_contacts(self):
+        """Get contacts from Google Contacts"""
+        service = build('people', 'v1', credentials=self.creds)
+        
+        results = service.people().connections().list(
+            resourceName='people/me',
+            pageSize=1000,
+            personFields='names,emailAddresses,phoneNumbers'
+        ).execute()
+        
+        return results.get('connections', [])
+    
+    def get_emails(self, max_results: int = 10):
+        """Get recent emails from Gmail"""
+        service = build('gmail', 'v1', credentials=self.creds)
+        
+        results = service.users().messages().list(
+            userId='me',
+            maxResults=max_results
+        ).execute()
+        
+        messages = results.get('messages', [])
+        
+        email_data = []
+        for message in messages:
+            msg = service.users().messages().get(
+                userId='me',
+                id=message['id']
+            ).execute()
+            email_data.append(msg)
+        
+        return email_data
+```
+
+---
+
+### 2.6 Computer Control & Automation
+
+**System Control Module:**
+
+```python
+import subprocess
+import platform
+import pyautogui
+import psutil
+from typing import Dict, List
+
+class ComputerControl:
+    def __init__(self):
+        self.os_type = platform.system()
+    
+    def open_application(self, app_name: str) -> Dict:
+        """
+        Open an application by name
+        
+        Args:
+            app_name: Application name
+            
+        Returns:
+            Success status and message
+        """
+        app_map = {
+            'chrome': {
+                'Windows': 'chrome.exe',
+                'Darwin': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+                'Linux': 'google-chrome'
+            },
+            'firefox': {
+                'Windows': 'firefox.exe',
+                'Darwin': '/Applications/Firefox.app/Contents/MacOS/firefox',
+                'Linux': 'firefox'
+            },
+            'vscode': {
+                'Windows': 'code.exe',
+                'Darwin': 'code',
+                'Linux': 'code'
+            },
+            'spotify': {
+                'Windows': r'C:\Users\%USERNAME%\AppData\Roaming\Spotify\Spotify.exe',
+                'Darwin': '/Applications/Spotify.app/Contents/MacOS/Spotify',
+                'Linux': 'spotify'
+            },
+            'terminal': {
+                'Windows': 'cmd.exe',
+                'Darwin': '/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal',
+                'Linux': 'gnome-terminal'
+            },
+            # Add more applications
+        }
+        
+        app_lower = app_name.lower()
+        
+        try:
+            if app_lower in app_map:
+                executable = app_map[app_lower].get(self.os_type)
+                if executable:
+                    subprocess.Popen([executable])
+                    return {'success': True, 'message': f'Opened {app_name}'}
+            
+            # Try to open by name directly
+            subprocess.Popen([app_name])
+            return {'success': True, 'message': f'Opened {app_name}'}
+            
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def close_application(self, app_name: str) -> Dict:
+        """Close a running application"""
+        try:
+            for proc in psutil.process_iter(['name']):
+                if app_name.lower() in proc.info['name'].lower():
+                    proc.terminate()
+                    return {'success': True, 'message': f'Closed {app_name}'}
+            
+            return {'success': False, 'error': f'{app_name} not running'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def get_running_applications(self) -> List[str]:
+        """Get list of running applications"""
+        apps = []
+        for proc in psutil.process_iter(['name']):
+            apps.append(proc.info['name'])
+        return list(set(apps))
+    
+    def control_volume(self, action: str, level: int = None) -> Dict:
+        """
+        Control system volume
+        
+        Args:
+            action: 'set', 'increase', 'decrease', 'mute', 'unmute'
+            level: Volume level (0-100) for 'set' action
+        """
+        try:
+            if self.os_type == 'Windows':
+                from ctypes import cast, POINTER
+                from comtypes import CLSCTX_ALL
+                from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+                
+                devices = AudioUtilities.GetSpeakers()
+                interface = devices.Activate(
+                    IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+                volume = cast(interface, POINTER(IAudioEndpointVolume))
+                
+                if action == 'mute':
+                    volume.SetMute(1, None)
+                elif action == 'unmute':
+                    volume.SetMute(0, None)
+                elif action == 'set' and level is not None:
+                    volume.SetMasterVolumeLevelScalar(level / 100, None)
+                elif action == 'increase':
+                    current = volume.GetMasterVolumeLevelScalar()
+                    volume.SetMasterVolumeLevelScalar(min(1.0, current + 0.1), None)
+                elif action == 'decrease':
+                    current = volume.GetMasterVolumeLevelScalar()
+                    volume.SetMasterVolumeLevelScalar(max(0.0, current - 0.1), None)
+                
+                return {'success': True, 'message': f'Volume {action}'}
+            
+            elif self.os_type == 'Darwin':  # macOS
+                if action == 'set' and level is not None:
+                    subprocess.run(['osascript', '-e', f'set volume output volume {level}'])
+                elif action == 'mute':
+                    subprocess.run(['osascript', '-e', 'set volume with output muted'])
+                elif action == 'unmute':
+                    subprocess.run(['osascript', '-e', 'set volume without output muted'])
+                
+                return {'success': True, 'message': f'Volume {action}'}
+            
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def take_screenshot(self, save_path: str = None) -> Dict:
+        """Take a screenshot"""
+        try:
+            screenshot = pyautogui.screenshot()
+            if save_path:
+                screenshot.save(save_path)
+            return {'success': True, 'path': save_path}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def type_text(self, text: str) -> Dict:
+        """Type text at current cursor position"""
+        try:
+            pyautogui.write(text, interval=0.05)
+            return {'success': True, 'message': 'Text typed'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def press_key(self, key: str) -> Dict:
+        """Press a keyboard key"""
+        try:
+            pyautogui.press(key)
+            return {'success': True, 'message': f'Pressed {key}'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def execute_command(self, command: str) -> Dict:
+        """Execute a system command"""
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            return {
+                'success': result.returncode == 0,
+                'output': result.stdout,
+                'error': result.stderr
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+```
+
+---
+
+## 3. Main System Integration
+
+**Complete Jarvis Core System:**
+
+```python
+import asyncio
+from typing import Dict
+import json
+
+class JarvisCore:
+    def __init__(self, config: Dict):
+        """
+        Initialize Jarvis core system
+        
+        Args:
+            config: Configuration dictionary with API keys and settings
+        """
+        # Initialize components
+        self.config = config
+        self.is_active = False
+        self.is_listening = False
+        
+        # Speech components
+        self.speech_recognizer = SpeechRecognizer()
+        self.tts = TextToSpeech()
+        
+        # RAG system
+        self.rag = JarvisRAG(
+            groq_api_key=config['groq_api_key'],
+            db_config=config['db_config']
+        )
+        
+        # Computer control
+        self.computer = ComputerControl()
+        
+        # Phone integration (optional)
+        if config.get('phone_api_url'):
+            self.phone = PhoneAPI(
+                base_url=config['phone_api_url'],
+                api_key=config['phone_api_key']
+            )
+        else:
+            self.phone = None
+        
+        # Google integration (optional)
+        if config.get('google_credentials'):
+            self.google = GoogleIntegration(config['google_credentials'])
+        else:
+            self.google = None
+    
+    def activate(self):
+        """Activate Jarvis (called when wake word detected)"""
+        self.is_active = True
+        self.tts.speak("Yes sir, I'm here")
+        print("Jarvis activated!")
+        
+        # Start listening for command
+        asyncio.run(self.listen_and_process())
+    
+    async def listen_and_process(self):
+        """Main command processing loop"""
+        while self.is_active:
+            # Listen for user command
+            user_input = self.speech_recognizer.listen_for_command(timeout=10)
+            
+            if user_input is None:
+                # No command detected, go back to sleep
+                self.tts.speak("Going back to sleep mode")
+                self.is_active = False
+                break
+            
+            print(f"User said: {user_input}")
+            
+            # Check for exit commands
+            if any(word in user_input.lower() for word in ['sleep', 'standby', 'goodbye']):
+                self.tts.speak("Going to sleep mode. Call me when you need me.")
+                self.is_active = False
+                break
+            
+            # Process command with RAG
+            result = self.rag.process_command(user_input)
+            
+            # Speak response
+            self.tts.speak(result['response'])
+            
+            # Execute any required actions
+            if result.get('action_result'):
+                action = result['action_result']
+                if not action.get('success'):
+                    self.tts.speak(f"I encountered an issue: {action.get('error', 'Unknown error')}")
+            
+            # Continue listening for next command
+            await asyncio.sleep(0.1)
+    
+    def deactivate(self):
+        """Deactivate Jarvis"""
+        self.is_active = False
+        print("Jarvis deactivated")
+
+
+class JarvisService:
+    """Main service that runs continuously"""
+    
+    def __init__(self, config_path: str):
+        # Load configuration
+        with open(config_path, 'r') as f:
+            self.config = json.load(f)
+        
+        # Initialize wake word detector
+        self.wake_detector = WakeWordDetector()
+        
+        # Initialize Jarvis core
+        self.jarvis = JarvisCore(self.config)
+    
+    def run(self):
+        """Main service loop"""
+        print("Jarvis service starting...")
+        print("Listening for wake word 'Jarvis'...")
+        
+        # Set callback for wake word detection
+        self.wake_detector.on_wake_word_detected = self.on_wake_word
+        
+        # Start listening (blocking call)
+        self.wake_detector.start_listening()
+    
+    def on_wake_word(self):
+        """Called when wake word is detected"""
+        if not self.jarvis.is_active:
+            self.jarvis.activate()
+
+
+# Entry point
+if __name__ == "__main__":
+    service = JarvisService('config.json')
+    service.run()
+```
+
+**Configuration File (config.json):**
+
+```json
+{
+    "groq_api_key": "your_groq_api_key_here",
+    "openai_api_key": "your_openai_api_key_for_embeddings",
+    "picovoice_access_key": "your_picovoice_key_here",
+    
+    "db_config": {
+        "host": "localhost",
+        "database": "jarvis_db",
+        "user": "your_username",
+        "password": "your_password",
+        "port": 5432
+    },
+    
+    "phone_api_url": "http://192.168.1.100:8080",
+    "phone_api_key": "your_phone_api_key",
+    
+    "google_credentials": "path/to/google_credentials.json",
+    
+    "settings": {
+        "wake_word": "jarvis",
+        "voice_speed": 175,
+        "voice_volume": 0.9,
+        "command_timeout": 10,
+        "context_retrieval_limit": 5
+    }
+}
+```
+
+---
+
+## 4. Learning System Implementation
+
+**Pattern Detection & Learning:**
+
+```python
+from datetime import datetime, timedelta
+from collections import Counter
+import json
+
+class LearningEngine:
+    def __init__(self, db_connection):
+        self.db = db_connection
+    
+    def analyze_usage_patterns(self):
+        """Analyze user behavior and detect patterns"""
+        
+        # 1. Time-based patterns
+        time_patterns = self.detect_time_patterns()
+        
+        # 2. Frequently used commands
+        frequent_commands = self.detect_frequent_commands()
+        
+        # 3. Application usage patterns
+        app_patterns = self.detect_app_patterns()
+        
+        # 4. Contextual patterns
+        context_patterns = self.detect_contextual_patterns()
+        
+        return {
+            'time_patterns': time_patterns,
+            'frequent_commands': frequent_commands,
+            'app_patterns': app_patterns,
+            'context_patterns': context_patterns
+        }
+    
+    def detect_time_patterns(self) -> Dict:
+        """Detect time-based usage patterns"""
+        cursor = self.db.cursor()
+        
+        # Get actions from last 30 days
+        cursor.execute("""
+            SELECT 
+                EXTRACT(HOUR FROM timestamp) as hour,
+                EXTRACT(DOW FROM timestamp) as day_of_week,
+                action_taken,
+                COUNT(*) as frequency
+            FROM conversations
+            WHERE 
+                timestamp > NOW() - INTERVAL '30 days'
+                AND action_taken IS NOT NULL
+            GROUP BY hour, day_of_week, action_taken
+            HAVING COUNT(*) > 3
+            ORDER BY frequency DESC
+        """)
+        
+        patterns = []
+        for row in cursor.fetchall():
+            hour, day_of_week, action, frequency = row
+            
+            # Convert day_of_week (0=Sunday) to name
+            days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 
+                   'Thursday', 'Friday', 'Saturday']
+            
+            patterns.append({
+                'hour': int(hour),
+                'day': days[int(day_of_week)],
+                'action': action,
+                'frequency': frequency,
+                'confidence': min(0.95, frequency / 30)  # Max 95% confidence
+            })
+        
+        cursor.close()
+        return patterns
+    
+    def detect_frequent_commands(self, min_frequency: int = 5) -> List[Dict]:
+        """Detect frequently used commands"""
+        cursor = self.db.cursor()
+        
+        cursor.execute("""
+            SELECT 
+                intent,
+                action_taken,
+                COUNT(*) as frequency,
+                AVG(CASE WHEN success THEN 1.0 ELSE 0.0 END) as success_rate
+            FROM conversations
+            WHERE timestamp > NOW() - INTERVAL '30 days'
+            GROUP BY intent, action_taken
+            HAVING COUNT(*) >= %s
+            ORDER BY frequency DESC
+            LIMIT 20
+        """, (min_frequency,))
+        
+        commands = []
+        for row in cursor.fetchall():
+            intent, action, frequency, success_rate = row
+            commands.append({
+                'intent': intent,
+                'action': action,
+                'frequency': frequency,
+                'success_rate': float(success_rate),
+                'suggestion': self.generate_automation_suggestion(intent, action, frequency)
+            })
+        
+        cursor.close()
+        return commands
+    
+    def detect_app_patterns(self) -> Dict:
+        """Detect application usage patterns"""
+        cursor = self.db.cursor()
+        
+        cursor.execute("""
+            SELECT 
+                action_taken,
+                COUNT(*) as frequency,
+                ARRAY_AGG(DISTINCT EXTRACT(HOUR FROM timestamp)) as hours_used
+            FROM conversations
+            WHERE 
+                action_taken LIKE 'open_app:%'
+                AND timestamp > NOW() - INTERVAL '30 days'
+            GROUP BY action_taken
+            HAVING COUNT(*) > 3
+        """)
+        
+        app_patterns = {}
+        for row in cursor.fetchall():
+            action, frequency, hours = row
+            app_name = action.split(':')[1]
+            
+            app_patterns[app_name] = {
+                'frequency': frequency,
+                'typical_hours': [int(h) for h in hours],
+                'suggestion': self.suggest_app_automation(app_name, hours, frequency)
+            }
+        
+        cursor.close()
+        return app_patterns
+    
+    def generate_automation_suggestion(self, intent: str, 
+                                      action: str, frequency: int) -> str:
+        """Generate automation suggestions based on patterns"""
+        if frequency > 20:
+            return f"I notice you use '{action}' very frequently. Would you like me to create a shortcut?"
+        elif frequency > 10:
+            return f"You often use '{action}'. I can automate this if you'd like."
+        return None
+    
+    def suggest_app_automation(self, app_name: str, 
+                              hours: List[int], frequency: int) -> str:
+        """Suggest app opening automation"""
+        if len(set(hours)) <= 2 and frequency > 15:
+            # User opens this app at consistent times
+            typical_hour = Counter(hours).most_common(1)[0][0]
+            return f"I notice you typically open {app_name} around {typical_hour}:00. Should I open it automatically?"
+        return None
+    
+    def learn_from_feedback(self, conversation_id: int, 
+                          feedback: str, notes: str = None):
+        """
+        Learn from user feedback
+        
+        Args:
+            conversation_id: ID of the conversation
+            feedback: 'positive', 'negative', or 'neutral'
+            notes: Optional notes about the feedback
+        """
+        cursor = self.db.cursor()
+        
+        # Update action log
+        cursor.execute("""
+            INSERT INTO action_log (
+                timestamp, action_type, parameters, user_feedback
+            )
+            SELECT 
+                timestamp, action_taken, 
+                jsonb_build_object('conversation_id', %s, 'notes', %s),
+                %s
+            FROM conversations
+            WHERE id = %s
+        """, (conversation_id, notes, feedback, conversation_id))
+        
+        # If negative feedback, reduce confidence in similar patterns
+        if feedback == 'negative':
+            cursor.execute("""
+                SELECT intent, action_taken FROM conversations WHERE id = %s
+            """, (conversation_id,))
+            
+            result = cursor.fetchone()
+            if result:
+                intent, action = result
+                
+                # Reduce confidence in user profile for similar patterns
+                cursor.execute("""
+                    UPDATE user_profile
+                    SET confidence_score = GREATEST(0.1, confidence_score - 0.2)
+                    WHERE value::text LIKE %s
+                """, (f'%{action}%',))
+        
+        self.db.commit()
+        cursor.close()
+    
+    def get_proactive_suggestions(self) -> List[str]:
+        """
+        Generate proactive suggestions based on patterns and context
+        
+        Returns:
+            List of suggestion strings
+        """
+        patterns = self.analyze_usage_patterns()
+        suggestions = []
+        
+        current_hour = datetime.now().hour
+        current_day = datetime.now().strftime('%A')
+        
+        # Check time patterns
+        for pattern in patterns['time_patterns']:
+            if (pattern['hour'] == current_hour and 
+                pattern['day'] == current_day and 
+                pattern['confidence'] > 0.7):
+                
+                suggestions.append(
+                    f"It's {current_hour}:00. You usually {pattern['action']} at this time. "
+                    "Would you like me to do that now?"
+                )
+        
+        # Check app patterns
+        for app, data in patterns['app_patterns'].items():
+            if current_hour in data['typical_hours'] and data['frequency'] > 15:
+                suggestions.append(
+                    f"You typically use {app} around this time. Should I open it?"
+                )
+        
+        return suggestions[:3]  # Return top 3 suggestions
+```
+
+---
+
+## 5. Advanced Features
+
+### 5.1 Proactive Notifications
+
+```python
+import schedule
+import time
+from threading import Thread
+
+class ProactiveNotifier:
+    def __init__(self, jarvis_core: JarvisCore, learning_engine: LearningEngine):
+        self.jarvis = jarvis_core
+        self.learning = learning_engine
+        self.running = False
+    
+    def start(self):
+        """Start proactive notification system"""
+        self.running = True
+        
+        # Schedule checks
+        schedule.every(30).minutes.do(self.check_suggestions)
+        schedule.every(1).hours.do(self.check_calendar)
+        schedule.every(1).day.at("09:00").do(self.morning_briefing)
+        
+        # Run in separate thread
+        thread = Thread(target=self._run_scheduler)
+        thread.daemon = True
+        thread.start()
+    
+    def _run_scheduler(self):
+        """Run the scheduler loop"""
+        while self.running:
+            schedule.run_pending()
+            time.sleep(60)
+    
+    def check_suggestions(self):
+        """Check for proactive suggestions"""
+        suggestions = self.learning.get_proactive_suggestions()
+        
+        if suggestions and not self.jarvis.is_active:
+            # Activate Jarvis to give suggestion
+            self.jarvis.tts.speak(suggestions[0])
+    
+    def check_calendar(self):
+        """Check upcoming calendar events"""
+        if self.jarvis.google:
+            events = self.jarvis.google.get_calendar_events(days=1)
+            
+            # Check for events in next hour
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            soon = now + timedelta(hours=1)
+            
+            for event in events:
+                event_time = datetime.fromisoformat(
+                    event['start'].get('dateTime', event['start'].get('date'))
+                )
+                
+                if now < event_time < soon:
+                    self.jarvis.tts.speak(
+                        f"Reminder: You have {event['summary']} "
+                        f"in {int((event_time - now).seconds / 60)} minutes"
+                    )
+    
+    def morning_briefing(self):
+        """Provide morning briefing"""
+        briefing = self.generate_briefing()
+        self.jarvis.tts.speak(briefing)
+    
+    def generate_briefing(self) -> str:
+        """Generate morning briefing content"""
+        parts = ["Good morning."]
+        
+        # Calendar events
+        if self.jarvis.google:
+            events = self.jarvis.google.get_calendar_events(days=1)
+            if events:
+                parts.append(f"You have {len(events)} events today.")
+        
+        # Weather (if integrated)
+        # parts.append("The weather is...")
+        
+        # Notifications
+        if self.jarvis.phone:
+            notifications = self.jarvis.phone.get_notifications()
+            if notifications:
+                parts.append(f"You have {len(notifications)} unread notifications.")
+        
+        return " ".join(parts)
+```
+
+### 5.2 Context Awareness
+
+```python
+class ContextManager:
+    def __init__(self, db_connection):
+        self.db = db_connection
+        self.current_context = {}
+    
+    def update_context(self, key: str, value: any):
+        """Update current context"""
+        self.current_context[key] = {
+            'value': value,
+            'timestamp': datetime.now()
+        }
+    
+    def get_context(self) -> Dict:
+        """Get current context"""
+        return self.current_context
+    
+    def infer_context_from_conversation(self, recent_messages: List[Dict]):
+        """Infer context from recent conversation"""
+        # Extract entities and topics
+        topics = []
+        entities = []
+        
+        for msg in recent_messages:
+            # Simple keyword extraction (can be enhanced with NLP)
+            text = msg['user_input'].lower()
+            
+            # Detect topics
+            if 'meeting' in text or 'calendar' in text:
+                topics.append('scheduling')
+            if 'email' in text or 'message' in text:
+                topics.append('communication')
+            if 'file' in text or 'document' in text:
+                topics.append('file_management')
+        
+        self.update_context('topics', list(set(topics)))
+    
+    def should_ask_for_clarification(self, user_input: str) -> bool:
+        """Determine if clarification is needed"""
+        # Check if input is ambiguous
+        ambiguous_keywords = ['it', 'that', 'this', 'them', 'they']
+        
+        words = user_input.lower().split()
+        has_ambiguous = any(word in words for word in ambiguous_keywords)
+        has_context = len(self.current_context) > 0
+        
+        return has_ambiguous and not has_context
+```
+
+---
+
+## 6. Deployment & Maintenance
+
+### 6.1 Installation Steps
+
+**Step 1: Install Prerequisites**
+
+```bash
+# Python 3.10+
+python --version
+
+# PostgreSQL 14+
+psql --version
+
+# Install Python packages
+pip install -r requirements.txt
+```
+
+**requirements.txt:**
+```
+groq
+openai
+psycopg2-binary
+pgvector
+SpeechRecognition
+pyttsx3
+pyaudio
+pvporcupine
+pyautogui
+psutil
+requests
+schedule
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+```
+
+**Step 2: Setup PostgreSQL**
+
+```bash
+# Create database
+createdb jarvis_db
+
+# Run schema
+psql jarvis_db < schema.sql
+```
+
+**Step 3: Configure Service**
+
+Create `config.json` with your API keys and settings.
+
+**Step 4: Install as Service**
+
+**Windows:**
+```bash
+nssm install Jarvis "C:\Python310\python.exe" "C:\path\to\jarvis\main.py"
+nssm start Jarvis
+```
+
+**Linux:**
+```bash
+sudo cp jarvis.service /etc/systemd/system/
+sudo systemctl enable jarvis
+sudo systemctl start jarvis
+```
+
+### 6.2 Monitoring & Logging
+
+```python
+import logging
+from logging.handlers import RotatingFileHandler
+
+def setup_logging():
+    """Setup logging configuration"""
+    logger = logging.getLogger('jarvis')
+    logger.setLevel(logging.INFO)
+    
+    # File handler with rotation
+    file_handler = RotatingFileHandler(
+        'jarvis.log',
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    
+    # Console handler
+    console_handler = logging.StreamHandler()
+    
+    # Formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger
+```
+
+### 6.3 Performance Optimization
+
+**Tips:**
+1. **Database Indexing**: Ensure proper indexes on frequently queried columns
+2. **Embedding Caching**: Cache embeddings to avoid regenerating
+3. **Connection Pooling**: Use connection pools for database
+4. **Async Operations**: Use asyncio for I/O operations
+5. **Model Selection**: Use lighter models when speed is critical
+
+---
+
+## 7. Security Considerations
+
+1. **API Key Protection**: Store keys in environment variables or encrypted config
+2. **Database Access**: Use least privilege principle for DB user
+3. **Phone API**: Use HTTPS and authentication tokens
+4. **Voice Authentication**: Consider adding voice recognition for sensitive commands
+5. **Command Validation**: Validate and sanitize all commands before execution
+
+---
+
+## 8. Future Enhancements
+
+1. **Multi-user Support**: Handle multiple users with different profiles
+2. **Voice Cloning**: Custom voice for responses
+3. **Image Understanding**: Process screenshots and images
+4. **Smart Home Integration**: Control IoT devices
+5. **Learning from Web**: Autonomous web browsing and learning
+6. **Task Automation**: Create complex automated workflows
+7. **Natural Conversations**: Multi-turn dialogue management
+8. **Emotion Detection**: Detect and respond to user emotions
+
+---
+
+## 9. Troubleshooting Guide
+
+**Common Issues:**
+
+**Issue 1: Wake word not detected**
+- Check microphone permissions
+- Verify Picovoice API key is valid
+- Test microphone with other applications
+- Adjust sensitivity settings in wake word detector
+- Check if service is running: `systemctl status jarvis` (Linux) or Task Manager (Windows)
+
+**Issue 2: Database connection errors**
+- Verify PostgreSQL is running
+- Check connection credentials in config.json
+- Ensure pgvector extension is installed: `CREATE EXTENSION vector;`
+- Check firewall settings if using remote database
+
+**Issue 3: Speech recognition not working**
+- Check internet connection (Google Speech Recognition requires internet)
+- Verify microphone input levels
+- Test with: `python -m speech_recognition`
+- Consider switching to offline model like Vosk
+
+**Issue 4: Groq API errors**
+- Verify API key is valid
+- Check API rate limits
+- Ensure you have credits/quota remaining
+- Test with simple API call outside the application
+
+**Issue 5: High CPU/memory usage**
+- Wake word detection consuming too much: Try different sensitivity settings
+- Database queries slow: Add indexes, optimize queries
+- Too many background processes: Adjust polling intervals
+- Memory leaks: Restart service periodically
+
+**Issue 6: Text-to-Speech not working**
+- Check if pyttsx3 is properly installed
+- Try alternative TTS: `pip install gTTS`
+- Verify audio output device is working
+- Check volume settings
+
+---
+
+## 10. Testing Strategy
+
+### 10.1 Unit Tests
+
+```python
+import unittest
+from unittest.mock import Mock, patch
+
+class TestJarvisRAG(unittest.TestCase):
+    def setUp(self):
+        """Setup test fixtures"""
+        self.mock_db = Mock()
+        self.mock_groq = Mock()
+        
+        self.rag = JarvisRAG(
+            groq_api_key="test_key",
+            db_config={'host': 'localhost'}
+        )
+        self.rag.db = self.mock_db
+        self.rag.groq_client = self.mock_groq
+    
+    def test_retrieve_relevant_context(self):
+        """Test context retrieval"""
+        # Mock database response
+        self.mock_db.cursor().fetchall.return_value = [
+            ('Open Chrome', 'Opening Chrome', '2024-01-01', 'open_app', 'chrome', 0.95)
+        ]
+        
+        result = self.rag.retrieve_relevant_context("open browser")
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['user_input'], 'Open Chrome')
+    
+    def test_classify_intent_open_app(self):
+        """Test intent classification for opening apps"""
+        intent = self.rag.classify_intent("open chrome", "")
+        self.assertEqual(intent, 'open_app')
+    
+    def test_classify_intent_search(self):
+        """Test intent classification for web search"""
+        intent = self.rag.classify_intent("search for python tutorials", "")
+        self.assertEqual(intent, 'search_web')
+
+class TestComputerControl(unittest.TestCase):
+    def setUp(self):
+        self.control = ComputerControl()
+    
+    @patch('subprocess.Popen')
+    def test_open_application_success(self, mock_popen):
+        """Test successful app opening"""
+        result = self.control.open_application('chrome')
+        
+        self.assertTrue(result['success'])
+        mock_popen.assert_called_once()
+    
+    def test_get_running_applications(self):
+        """Test getting list of running apps"""
+        apps = self.control.get_running_applications()
+        
+        self.assertIsInstance(apps, list)
+        self.assertGreater(len(apps), 0)
+
+if __name__ == '__main__':
+    unittest.main()
+```
+
+### 10.2 Integration Tests
+
+```python
+class TestJarvisIntegration(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        """Setup test database"""
+        cls.db = psycopg2.connect(
+            host='localhost',
+            database='jarvis_test',
+            user='test_user',
+            password='test_pass'
+        )
+        
+        # Create tables
+        with open('schema.sql', 'r') as f:
+            cls.db.cursor().execute(f.read())
+            cls.db.commit()
+    
+    def test_full_command_flow(self):
+        """Test complete command processing flow"""
+        jarvis = JarvisCore(self.test_config)
+        
+        # Simulate user command
+        result = jarvis.rag.process_command("open chrome")
+        
+        # Verify response
+        self.assertIn('response', result)
+        self.assertEqual(result['intent'], 'open_app')
+        self.assertTrue(result['action_result']['success'])
+    
+    def test_learning_from_interaction(self):
+        """Test that system learns from interactions"""
+        rag = JarvisRAG(groq_api_key="test", db_config=self.db_config)
+        
+        # Store multiple similar interactions
+        for i in range(10):
+            rag.store_interaction(
+                user_input="open chrome",
+                ai_response="Opening Chrome",
+                intent="open_app",
+                action_taken="open_app:chrome",
+                success=True
+            )
+        
+        # Check if pattern is learned
+        learning_engine = LearningEngine(self.db)
+        commands = learning_engine.detect_frequent_commands(min_frequency=5)
+        
+        self.assertGreater(len(commands), 0)
+        self.assertEqual(commands[0]['intent'], 'open_app')
+```
+
+### 10.3 Performance Tests
+
+```python
+import time
+
+class TestPerformance(unittest.TestCase):
+    def test_wake_word_detection_latency(self):
+        """Test wake word detection response time"""
+        detector = WakeWordDetector()
+        
+        start_time = time.time()
+        # Simulate wake word detection
+        detector.on_wake_word_detected()
+        end_time = time.time()
+        
+        latency = end_time - start_time
+        self.assertLess(latency, 0.5)  # Should respond within 500ms
+    
+    def test_speech_to_text_latency(self):
+        """Test speech recognition speed"""
+        recognizer = SpeechRecognizer()
+        
+        start_time = time.time()
+        # Test with sample audio
+        result = recognizer.listen_for_command(timeout=5)
+        end_time = time.time()
+        
+        processing_time = end_time - start_time
+        self.assertLess(processing_time, 3.0)  # Should process within 3 seconds
+    
+    def test_database_query_performance(self):
+        """Test database query speed"""
+        rag = JarvisRAG(groq_api_key="test", db_config=self.db_config)
+        
+        # Insert test data
+        for i in range(1000):
+            rag.store_interaction(
+                user_input=f"test command {i}",
+                ai_response=f"response {i}",
+                intent="test",
+                action_taken="test"
+            )
+        
+        # Test retrieval speed
+        start_time = time.time()
+        results = rag.retrieve_relevant_context("test command", limit=5)
+        end_time = time.time()
+        
+        query_time = end_time - start_time
+        self.assertLess(query_time, 0.1)  # Should query within 100ms
+```
+
+---
+
+## 11. Project Structure
+
+```
+jarvis/
+│
+├── config/
+│   ├── config.json              # Main configuration
+│   ├── config.example.json      # Example config template
+│   └── google_credentials.json  # Google API credentials
+│
+├── src/
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── jarvis_core.py       # Main Jarvis system
+│   │   ├── wake_word.py         # Wake word detection
+│   │   ├── speech.py            # Speech recognition & TTS
+│   │   └── context.py           # Context management
+│   │
+│   ├── rag/
+│   │   ├── __init__.py
+│   │   ├── rag_system.py        # RAG implementation
+│   │   ├── embeddings.py        # Embedding generation
+│   │   └── retrieval.py         # Context retrieval
+│   │
+│   ├── integrations/
+│   │   ├── __init__.py
+│   │   ├── phone_api.py         # Phone integration
+│   │   ├── google_services.py   # Google APIs
+│   │   ├── computer_control.py  # Computer automation
+│   │   └── email_handler.py     # Email operations
+│   │
+│   ├── learning/
+│   │   ├── __init__.py
+│   │   ├── pattern_detection.py # Pattern analysis
+│   │   ├── learning_engine.py   # Learning system
+│   │   └── proactive.py         # Proactive features
+│   │
+│   ├── database/
+│   │   ├── __init__.py
+│   │   ├── schema.sql           # Database schema
+│   │   ├── migrations/          # Database migrations
+│   │   └── db_manager.py        # Database operations
+│   │
+│   └── utils/
+│       ├── __init__.py
+│       ├── logger.py            # Logging configuration
+│       ├── validators.py        # Input validation
+│       └── helpers.py           # Helper functions
+│
+├── tests/
+│   ├── __init__.py
+│   ├── test_core.py
+│   ├── test_rag.py
+│   ├── test_integrations.py
+│   ├── test_learning.py
+│   └── test_performance.py
+│
+├── scripts/
+│   ├── setup.sh                 # Setup script
+│   ├── install_service.sh       # Service installation
+│   └── backup_db.sh             # Database backup
+│
+├── docs/
+│   ├── API.md                   # API documentation
+│   ├── CONFIGURATION.md         # Configuration guide
+│   ├── DEPLOYMENT.md            # Deployment guide
+│   └── TROUBLESHOOTING.md       # Troubleshooting guide
+│
+├── phone_app/                   # Phone companion app
+│   ├── android/                 # Android app
+│   └── ios/                     # iOS app (optional)
+│
+├── main.py                      # Entry point
+├── requirements.txt             # Python dependencies
+├── setup.py                     # Package setup
+├── README.md                    # Project readme
+├── LICENSE                      # License file
+└── .env.example                 # Environment variables template
+```
+
+---
+
+## 12. Implementation Roadmap
+
+### Phase 1: Core Foundation (Week 1-2)
+- [ ] Setup development environment
+- [ ] Install and configure PostgreSQL with pgvector
+- [ ] Create database schema
+- [ ] Implement basic speech recognition
+- [ ] Implement text-to-speech
+- [ ] Setup Groq API integration
+- [ ] Create basic RAG system
+
+### Phase 2: Wake Word & Service (Week 3)
+- [ ] Implement wake word detection with Porcupine
+- [ ] Create background service
+- [ ] Configure service to run on startup
+- [ ] Test wake word reliability
+- [ ] Add logging and error handling
+
+### Phase 3: Computer Control (Week 4)
+- [ ] Implement application control
+- [ ] Add system command execution
+- [ ] Create volume control
+- [ ] Add screenshot capability
+- [ ] Implement keyboard/mouse automation
+- [ ] Test all computer control features
+
+### Phase 4: Learning System (Week 5)
+- [ ] Implement pattern detection
+- [ ] Create learning engine
+- [ ] Add user preference storage
+- [ ] Implement confidence scoring
+- [ ] Test learning over time
+
+### Phase 5: Phone Integration (Week 6-7)
+- [ ] Create phone companion app (Android/iOS)
+- [ ] Implement REST API on phone
+- [ ] Add contact access
+- [ ] Add SMS functionality
+- [ ] Add notification access
+- [ ] Test phone-computer sync
+
+### Phase 6: Advanced Features (Week 8)
+- [ ] Add proactive notifications
+- [ ] Implement context awareness
+- [ ] Create morning briefings
+- [ ] Add calendar integration
+- [ ] Add email integration
+
+### Phase 7: Polish & Testing (Week 9-10)
+- [ ] Comprehensive testing
+- [ ] Performance optimization
+- [ ] Bug fixes
+- [ ] Documentation
+- [ ] Security audit
+- [ ] User acceptance testing
+
+---
+
+## 13. Voice Commands Reference
+
+### Basic Commands
+
+**System Control:**
+- "Jarvis, wake up" / "Jarvis" → Activate system
+- "Sleep" / "Standby" / "Goodbye" → Deactivate
+- "Restart" / "Reboot" → Restart Jarvis service
+
+**Application Control:**
+- "Open [app name]" → Open application
+- "Close [app name]" → Close application
+- "Switch to [app name]" → Focus application
+- "What's running?" → List running applications
+
+**Search & Browse:**
+- "Search for [query]" → Web search
+- "Look up [topic]" → Search and summarize
+- "Open [website]" → Open URL in browser
+
+**System Information:**
+- "What time is it?" → Current time
+- "What's the date?" → Current date
+- "Battery status" → Battery information
+- "System status" → System information
+
+### Advanced Commands
+
+**Email:**
+- "Check email" → Open email client
+- "Send email to [contact]" → Compose email
+- "Read latest emails" → Read recent emails
+
+**Calendar:**
+- "What's on my calendar?" → Today's events
+- "Schedule meeting at [time]" → Create event
+- "What's my next meeting?" → Next event
+
+**Phone Commands:**
+- "Call [contact]" → Initiate call
+- "Send message to [contact]" → Send SMS
+- "Read notifications" → Read phone notifications
+- "Where's my phone?" → Locate phone
+
+**File Management:**
+- "Find file [name]" → Search for file
+- "Open document [name]" → Open file
+- "Show recent files" → List recent files
+
+**Productivity:**
+- "Set reminder for [time]" → Create reminder
+- "Take a note" → Create note
+- "Set timer for [duration]" → Start timer
+- "Focus mode on/off" → Enable/disable focus mode
+
+**Custom Commands:**
+- "Create command [name]" → Create custom command
+- "Run [custom command]" → Execute custom command
+
+---
+
+## 14. API Documentation
+
+### Phone API Endpoints
+
+**Base URL:** `http://[phone-ip]:8080/api`
+
+**Authentication:** Bearer token in Authorization header
+
+#### Contacts
+
+```
+GET /contacts
+Query Parameters:
+  - q: Search query (optional)
+  - limit: Number of results (default: 100)
+
+Response:
+[
+  {
+    "id": "12345",
+    "name": "John Doe",
+    "phone": ["+1234567890"],
+    "email": ["john@example.com"],
+    "photo_uri": "content://..."
+  }
+]
+```
+
+#### SMS
+
+```
+POST /sms/send
+Body:
+{
+  "number": "+1234567890",
+  "message": "Hello from Jarvis"
+}
+
+Response:
+{
+  "success": true,
+  "message_id": "67890"
+}
+```
+
+#### Notifications
+
+```
+GET /notifications
+Response:
+[
+  {
+    "id": "123",
+    "package": "com.whatsapp",
+    "title": "New Message",
+    "text": "Hello!",
+    "timestamp": "2024-01-08T10:30:00Z"
+  }
+]
+```
+
+#### Calendar
+
+```
+GET /calendar/events
+Query Parameters:
+  - start: Start date (ISO 8601)
+  - end: End date (ISO 8601)
+
+Response:
+[
+  {
+    "id": "456",
+    "title": "Team Meeting",
+    "start": "2024-01-08T14:00:00Z",
+    "end": "2024-01-08T15:00:00Z",
+    "location": "Conference Room A"
+  }
+]
+```
+
+---
+
+## 15. Environment Variables
+
+```bash
+# .env file
+
+# API Keys
+GROQ_API_KEY=your_groq_api_key_here
+OPENAI_API_KEY=your_openai_api_key_here
+PICOVOICE_ACCESS_KEY=your_picovoice_key_here
+
+# Database
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=jarvis_db
+DB_USER=jarvis_user
+DB_PASSWORD=your_secure_password
+
+# Phone Integration
+PHONE_API_URL=http://192.168.1.100:8080
+PHONE_API_KEY=your_phone_api_key
+
+# Google Services
+GOOGLE_CREDENTIALS_PATH=./config/google_credentials.json
+
+# Settings
+WAKE_WORD=jarvis
+LOG_LEVEL=INFO
+ENABLE_PROACTIVE=true
+CONTEXT_LIMIT=5
+```
+
+---
+
+## 16. Backup & Recovery
+
+### Database Backup
+
+```bash
+#!/bin/bash
+# backup_db.sh
+
+BACKUP_DIR="/path/to/backups"
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="$BACKUP_DIR/jarvis_backup_$DATE.sql"
+
+# Create backup
+pg_dump jarvis_db > $BACKUP_FILE
+
+# Compress
+gzip $BACKUP_FILE
+
+# Keep only last 7 days of backups
+find $BACKUP_DIR -name "jarvis_backup_*.sql.gz" -mtime +7 -delete
+
+echo "Backup completed: $BACKUP_FILE.gz"
+```
+
+### Restore from Backup
+
+```bash
+# Uncompress
+gunzip jarvis_backup_20240108_120000.sql.gz
+
+# Restore
+psql jarvis_db < jarvis_backup_20240108_120000.sql
+```
+
+### Configuration Backup
+
+```bash
+# Backup configuration
+cp config/config.json backups/config_$(date +%Y%m%d).json
+
+# Backup learning data
+pg_dump jarvis_db -t user_profile -t conversations > backups/learning_data_$(date +%Y%m%d).sql
+```
+
+---
+
+## 17. Performance Benchmarks
+
+**Target Performance Metrics:**
+
+| Metric | Target | Acceptable |
+|--------|--------|------------|
+| Wake word detection latency | < 200ms | < 500ms |
+| Speech recognition time | < 2s | < 5s |
+| Command processing time | < 1s | < 3s |
+| Database query time | < 50ms | < 200ms |
+| TTS generation time | < 500ms | < 1s |
+| Total response time | < 3s | < 8s |
+| Memory usage (idle) | < 100MB | < 200MB |
+| CPU usage (idle) | < 5% | < 10% |
+| Memory usage (active) | < 300MB | < 500MB |
+| CPU usage (active) | < 30% | < 50% |
+
+---
+
+## 18. Privacy & Data Management
+
+### Data Collection
+
+Jarvis collects and stores:
+- Voice commands (converted to text)
+- User interactions and preferences
+- System actions and results
+- Time-based patterns
+- External data (contacts, calendar, etc.)
+
+### Data Retention
+
+- **Conversations**: Kept indefinitely for learning (can be configured)
+- **External data cache**: Refreshed every 24 hours
+- **Logs**: Rotated after 10MB, keep last 5 files
+- **Backups**: Keep last 30 days
+
+### Privacy Controls
+
+```python
+class PrivacyManager:
+    def __init__(self, db_connection):
+        self.db = db_connection
+    
+    def clear_conversations(self, before_date=None):
+        """Clear conversation history"""
+        cursor = self.db.cursor()
+        
+        if before_date:
+            cursor.execute("""
+                DELETE FROM conversations 
+                WHERE timestamp < %s
+            """, (before_date,))
+        else:
+            cursor.execute("DELETE FROM conversations")
+        
+        self.db.commit()
+        cursor.close()
+    
+    def export_user_data(self, output_file: str):
+        """Export all user data"""
+        cursor = self.db.cursor()
+        
+        # Export conversations
+        cursor.execute("SELECT * FROM conversations")
+        conversations = cursor.fetchall()
+        
+        # Export preferences
+        cursor.execute("SELECT * FROM user_profile")
+        preferences = cursor.fetchall()
+        
+        data = {
+            'conversations': conversations,
+            'preferences': preferences,
+            'exported_at': datetime.now().isoformat()
+        }
+        
+        with open(output_file, 'w') as f:
+            json.dump(data, f, indent=2, default=str)
+        
+        cursor.close()
+    
+    def anonymize_data(self):
+        """Anonymize personal data"""
+        cursor = self.db.cursor()
+        
+        # Remove names and personal identifiers
+        cursor.execute("""
+            UPDATE conversations
+            SET user_input = regexp_replace(user_input, '[A-Z][a-z]+ [A-Z][a-z]+', '[NAME]', 'g'),
+                ai_response = regexp_replace(ai_response, '[A-Z][a-z]+ [A-Z][a-z]+', '[NAME]', 'g')
+        """)
+        
+        # Clear external data
+        cursor.execute("DELETE FROM external_data WHERE source = 'phone'")
+        
+        self.db.commit()
+        cursor.close()
+```
+
+---
+
+## 19. Quick Start Guide
+
+### Minimal Working Example
+
+```python
+# quick_start.py
+from src.core.jarvis_core import JarvisCore
+from src.core.speech import SpeechRecognizer, TextToSpeech
+from src.rag.rag_system import JarvisRAG
+
+# Simple configuration
+config = {
+    'groq_api_key': 'your_key_here',
+    'db_config': {
+        'host': 'localhost',
+        'database': 'jarvis_db',
+        'user': 'postgres',
+        'password': 'password'
+    }
+}
+
+# Initialize components
+speech = SpeechRecognizer()
+tts = TextToSpeech()
+rag = JarvisRAG(config['groq_api_key'], config['db_config'])
+
+# Main loop
+print("Say something to Jarvis:")
+while True:
+    # Listen
+    user_input = speech.listen_for_command()
+    
+    if user_input:
+        print(f"You: {user_input}")
+        
+        # Exit command
+        if 'goodbye' in user_input.lower():
+            tts.speak("Goodbye!")
+            break
+        
+        # Process
+        result = rag.process_command(user_input)
+        
+        # Respond
+        print(f"Jarvis: {result['response']}")
+        tts.speak(result['response'])
+```
+
+Run with:
+```bash
+python quick_start.py
+```
+
+---
+
+## 20. Additional Resources
+
+### Recommended Reading
+
+1. **Retrieval-Augmented Generation:**
+   - "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks" (Lewis et al., 2020)
+   - LangChain Documentation: https://python.langchain.com
+
+2. **Voice Interfaces:**
+   - "Designing Voice User Interfaces" by Cathy Pearl
+   - Mozilla DeepSpeech Documentation
+
+3. **PostgreSQL & pgvector:**
+   - pgvector GitHub: https://github.com/pgvector/pgvector
+   - PostgreSQL Full-Text Search Documentation
+
+### Community & Support
+
+- **GitHub Issues**: Report bugs and request features
+- **Discord Server**: Join the Jarvis community
+- **Documentation Wiki**: Comprehensive guides and tutorials
+- **YouTube Channel**: Video tutorials and demos
+
+### Similar Projects
+
+- Mycroft AI (open-source voice assistant)
+- Home Assistant (home automation)
+- Leon AI (personal assistant)
+- Rhasspy (offline voice assistant)
+
+---
+
+## 21. License & Credits
+
+**License:** MIT License (or your choice)
+
+**Credits:**
+- Groq for LLM API
+- Picovoice for wake word detection
+- PostgreSQL and pgvector teams
+- Open-source community
+
+**Disclaimer:**
+This is a personal AI assistant project. Users are responsible for:
+- Compliance with local laws regarding data collection
+- API usage within provider terms of service
+- Security of personal data
+- Ethical use of automation capabilities
+
+---
+
+## Conclusion
+
+This document provides a complete technical specification for building an advanced JARVIS-like AI assistant. The system combines:
+
+- Always-running wake word detection
+- Sophisticated RAG system for context-aware responses
+- Computer control and automation
+- Phone integration for accessing mobile data
+- Learning engine that adapts to user behavior
+- Proactive suggestions and notifications
+
+The modular architecture allows for incremental development and easy customization. Follow the implementation roadmap, and you'll have a functional AI assistant in 8-10 weeks.
+
+**Next Steps:**
+1. Set up your development environment
+2. Install all prerequisites
+3. Create the database schema
+4. Start with Phase 1 of the roadmap
+5. Test each component thoroughly before moving to the next phase
+
+Good luck with your JARVIS build! Remember: the key to a great AI assistant is continuous improvement based on real usage patterns.
+
+---
+
+**Document Version:** 1.0  
+**Last Updated:** January 8, 2026  
+**Author:** Technical Specification Team  
+**Status:** Complete & Ready for Implementation

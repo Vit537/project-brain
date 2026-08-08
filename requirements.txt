@@ -1,0 +1,28 @@
+# Core dependencies for JARVIS Assistant
+speechrecognition==3.10.4
+# pyaudio==0.2.14  # Commented out - has issues with Python 3.13
+pyttsx3==2.90
+groq>=0.10.0
+python-dotenv==1.0.0
+sounddevice==0.5.1
+numpy>=1.24.0
+audioop-lts
+
+# Persistence and embeddings (local, no cost)
+chroma-db>=0.4.0
+sentence-transformers==3.0.1
+
+# Additional utilities
+colorama==0.4.6
+
+# Background service and system tray (optional)
+keyboard>=0.13.5  # For hotkey detection
+pystray>=0.19.5   # For system tray icon
+pillow>=10.0.0    # For icon image generation
+
+# Document handling (Word and PDF)
+python-docx>=1.1.0    # For Word document operations
+PyPDF2>=3.0.0         # For PDF reading
+
+# Web search and HTTP (optional, falls back to urllib)
+httpx>=0.27.0         # Async HTTP client for web search & Telegram

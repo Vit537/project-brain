@@ -1,0 +1,73 @@
+JARVIS Voice Assistant Project - Summary
+What I'm Building
+A voice-activated AI assistant (like Iron Man's JARVIS) that runs on my computer. It will listen to my voice commands, understand what I want, perform file operations (create/delete/move folders and files, search files), and respond back with voice.
+Technology Stack
+
+Language: Python (best for this type of project)
+Speech Recognition: Google Speech Recognition (free, built-in library)
+Text-to-Speech: pyttsx3 (works offline)
+AI Brain: Anthropic Claude API or OpenAI (for intelligent responses)
+File Operations: Python built-in libraries (os, shutil, pathlib)
+Project Type: Desktop application that runs locally
+
+What I Need to Install
+
+Python 3.10+ from python.org
+VS Code (code editor)
+Python Libraries:
+
+speechrecognition (voice to text)
+pyaudio (microphone input)
+pyttsx3 (text to voice)
+anthropic (AI intelligence)
+python-dotenv (configuration)
+
+
+
+Project Structure
+jarvis-assistant/
+├── src/
+│   ├── speech/        # Voice recognition & speech
+│   ├── ai/            # AI brain for understanding
+│   ├── system/        # File operations
+│   └── main.py        # Main program
+├── config/            # Settings & API keys
+├── tests/             # Testing
+└── requirements.txt   # Dependencies list
+Development Approach: SCRUM
+Using 2-week sprints with these phases:
+Sprint 1 (MVP - 2 weeks):
+
+Basic voice to text
+Text to voice response
+One simple command: create folder
+Goal: Working prototype that listens, understands one command, executes it, and responds
+
+Sprint 2: File management (delete, move, copy, search files)
+Sprint 3: AI integration for natural language understanding
+Sprint 4: Advanced features (open apps, web search, UI)
+How It Works
+
+I speak → "Hey JARVIS, create a folder called Projects in Documents"
+Microphone captures audio → Converts to text
+AI understands the command → Extracts: action=create, name=Projects, location=Documents
+Python executes → Creates the folder
+System responds → "Folder Projects created in Documents"
+I hear the response through speakers
+
+Internet Requirement
+Hybrid approach:
+
+File operations work offline
+AI features need internet (for Claude/ChatGPT API)
+Speech recognition can work offline or online (configurable)
+
+First Sprint Goal (Next 2 Weeks)
+Build a minimal working version where I can:
+
+Say a command
+System recognizes my voice
+Creates a folder
+Tells me it's done
+
+This is the foundation. Everything else builds on top of this.
