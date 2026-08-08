@@ -1,0 +1,45 @@
+{
+    "_comment": "JARVIS Report Project Configuration — edit this or use setup_report_project tool",
+    "university": "Test University",
+    "faculty": "Engineering",
+    "subject": "SI2",
+    "professor": "",
+    "group_number": "",
+    "project_name": "Test Project",
+    "team_members": [
+        {
+            "name": "Henry",
+            "student_id": "123",
+            "role": "Developer"
+        }
+    ],
+    "semester": "",
+    "year": "",
+    "city": "",
+    "country": "",
+    "methodologies": [
+        "SCRUM",
+        "PUDS"
+    ],
+    "tech_stack": {
+        "backend": "",
+        "frontend": "",
+        "database": "",
+        "mobile": "",
+        "devops": "",
+        "other": ""
+    },
+    "uml_version": "2.5",
+    "language": "es",
+    "story_point_scale": [
+        1,
+        2,
+        3,
+        5,
+        8,
+        13,
+        21
+    ],
+    "sprint_duration_weeks": 2,
+    "configured": true
+}
